@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tsfm_cal"
+version = "0.1.0"
+description = "Distributional calibration & tail-quantile extraction from TimesFM 2.5 on financial returns"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Wiktor Lazewski" }]
+license = { text = "Apache-2.0" }
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "yfinance>=0.2.40",
+]
+
+# NOTE: torch + timesfm are intentionally NOT listed here. They are heavy,
+# GPU-specific, and already installed on Kaggle via the timesfm install cell.
+# The CPU-testable parts of this package (config, io_utils, eval, plot, the PIT
+# math) import none of them. Only the model-forward path in pit.py touches the
+# model object, which the caller passes in.
+[project.optional-dependencies]
+baselines = ["arch>=6.0"]   # Phase 2: GARCH(1,1)-t, GAS
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,23 @@
+# Outputs (regenerated on Kaggle; pushed as a Kaggle Dataset, not committed)
+outputs/
+data_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
