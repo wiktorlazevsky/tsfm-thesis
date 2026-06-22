@@ -90,3 +90,26 @@ def download_returns(
         raw = np.diff(p) / p[:-1]
     mask = np.isfinite(raw)
     return dates[mask], rets
+
+
+def load_returns(asset: str, kind: str = config.RETURNS_TYPE):
+    """Return ``(dates, returns)`` for a canonical asset KEY from cleaned data.
+
+    Reads ``outputs/data/clean/<ASSET>.npz`` (or the mounted Kaggle Dataset).
+    This is the loader the Kaggle pipeline uses — no WRDS/yfinance at run time.
+    Falls back to a yfinance download (via the asset's ``source_id``) only if no
+    clean file exists, so quick local tests still work.
+    """
+    from . import io_utils
+
+    try:
+        d = io_utils.load_clean_npz(asset)
+    except (FileNotFoundError, OSError):
+        meta = config.ASSETS.get(asset)
+        if meta is None:
+            raise
+        print(f"  ! no clean file for {asset}; falling back to yfinance {meta['source_id']}")
+        return download_returns(meta["source_id"], kind=kind)
+
+    rets = d["log_returns"] if kind == "log" else d["simple_returns"]
+    return np.asarray(d["dates"]), np.asarray(rets, dtype=float)

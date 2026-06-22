@@ -90,49 +90,56 @@ def compute_pit_for_asset(
 def run_all_assets(
     model,
     run_dir,
-    tickers: dict[str, str] | None = None,
-    start: str = config.START,
-    end: str = config.END,
+    assets: list[str] | None = None,
     kind: str = config.RETURNS_TYPE,
     context: int = config.CONTEXT,
+    source: str = "clean",
 ):
     """Loop the asset universe, computing + **saving each npz inside the loop**.
 
-    Returns ``{asset_name: result_dict}`` for in-session convenience, but the
-    authoritative artifacts are the per-asset npz files written as we go — so a
-    Kaggle session loss never discards a completed asset (HANDOFF §8).
+    ``source="clean"`` (default) reads canonical cleaned returns via
+    ``data.load_returns`` (the loader autodetects the mounted Kaggle Dataset);
+    ``source="yfinance"`` uses the legacy direct download (Phase-1 fallback).
+
+    Saves per-asset npz keyed by the asset display label, written as we go so a
+    Kaggle session loss never discards a completed asset. Returns
+    ``{display: result_dict}`` for in-session convenience.
     """
     from . import data
 
-    tickers = tickers or config.TICKERS
+    assets = assets or config.ASSET_KEYS
     results: dict[str, dict] = {}
 
-    for ticker, name in tickers.items():
-        print(f"Running {name} ({ticker})...")
+    for key in assets:
+        label = config.asset_display(key)
+        print(f"Running {label} ({key})...")
         try:
-            dates, rets = data.download_returns(ticker, start, end, kind)
-        except Exception as e:  # noqa: BLE001 — keep the loop alive on one bad fetch
-            print(f"  ! download failed for {ticker}: {e}")
+            if source == "clean":
+                dates, rets = data.load_returns(key, kind=kind)
+            else:
+                meta = config.ASSETS.get(key, {"source_id": key})
+                dates, rets = data.download_returns(meta["source_id"], kind=kind)
+        except Exception as e:  # noqa: BLE001 — keep the loop alive on one bad asset
+            print(f"  ! load failed for {key}: {e}")
             continue
 
         if len(rets) < context + 50:
-            print(f"  ! skipping {ticker}: only {len(rets)} returns (< context+50)")
+            print(f"  ! skipping {key}: only {len(rets)} returns (< context+50)")
             continue
 
-        res = compute_pit_for_asset(model, rets, context=context, label=name)
-        # Align dates to forecast steps (dates of the realized values).
+        res = compute_pit_for_asset(model, rets, context=context, label=label)
         res_dates = dates[res["idx"]] if len(dates) == len(rets) else None
 
         io_utils.save_pit_npz(
             run_dir,
-            name,
+            label,
             pit=res["pit"],
             pit_interp=res["pit_interp"],
             quantiles=res["quantiles"],
             realized=res["realized"],
             dates=res_dates,
         )
-        results[name] = res
-        print(f"  saved {name}: {len(res['pit'])} PIT values")
+        results[label] = res
+        print(f"  saved {label}: {len(res['pit'])} PIT values")
 
     return results

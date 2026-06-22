@@ -246,6 +246,48 @@ def quantile_crossing_rate(quantiles: np.ndarray) -> float:
 
 
 # ===========================================================================
+# Head-based tail risk: combined VaR/ES backtest + per-τ reliability
+# (pure numpy/scipy — heads produce the var/es/quantile arrays; see heads.py)
+# ===========================================================================
+def backtest_var_es(
+    realized: np.ndarray,
+    var: np.ndarray,
+    es: np.ndarray,
+    alpha: float,
+    side: str = "left",
+) -> dict:
+    """Full VaR/ES backtest at one level: Kupiec + Christoffersen + ES(±CI) + FZ.
+
+    ``var``/``es`` are per-step forecast series (denormalized) at level ``alpha``.
+    For the loss tail use ``side="left"`` with ``alpha`` small (e.g. 0.01, 0.05).
+    """
+    exceed = var_exceedances(realized, var, side)
+    row = {"alpha": alpha, "side": side}
+    row.update(kupiec_pof(exceed, alpha if side == "left" else 1 - alpha))
+    row.update(christoffersen(exceed, alpha if side == "left" else 1 - alpha))
+    es_emp = expected_shortfall(realized, var, side)
+    row["es_realized"] = es_emp
+    row["es_forecast"] = float(np.mean(es)) if np.ndim(es) else float(es)
+    ci = es_bootstrap_ci(realized, var, side)
+    row["es_ci_lo"], row["es_ci_hi"], row["n_tail"] = ci["ci_lo"], ci["ci_hi"], ci["n_tail"]
+    row["fz_loss"] = fz_loss(realized, var, es, alpha if side == "left" else 1 - alpha)
+    return row
+
+
+def quantile_reliability(realized: np.ndarray, quantiles: np.ndarray, taus) -> list[dict]:
+    """Per-τ empirical coverage vs nominal: ``P(realized ≤ Q_τ)`` should equal τ."""
+    realized = np.asarray(realized, dtype=float)
+    Q = np.asarray(quantiles, dtype=float)
+    taus = np.atleast_1d(np.asarray(taus, dtype=float))
+    out = []
+    for k, tau in enumerate(taus):
+        emp = float(np.mean(realized <= Q[:, k]))
+        out.append({"tau": float(tau), "nominal": float(tau), "empirical": emp,
+                    "gap": emp - float(tau), "n": realized.size})
+    return out
+
+
+# ===========================================================================
 # One-row-per-asset summary
 # ===========================================================================
 def summarize_asset(

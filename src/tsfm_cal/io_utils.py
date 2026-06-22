@@ -46,10 +46,84 @@ def zeroshot_run_dir(run_id: str, create: bool = True) -> Path:
 
 def finetune_dir(asset: str, create: bool = True) -> Path:
     """Return ``outputs/finetune/<asset>/`` (Phase 3 scaffold)."""
-    root = base_dir() / "finetune" / asset
+    root = base_dir() / "finetune" / _safe(asset)
     if create:
         root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def data_clean_dir(create: bool = True) -> Path:
+    """Return ``outputs/data/clean/`` (canonical cleaned returns)."""
+    root = base_dir() / "data" / "clean"
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def make_clean_bundle(out_zip: str | os.PathLike | None = None) -> Path:
+    """Zip the whole cleaned-data tree into ONE file for easy Kaggle upload.
+
+    Produces ``outputs/data/tsfm-clean-data.zip`` containing::
+
+        clean/<ASSET>.npz ...      (the 7 cleaned return series)
+        data_quality_report.csv
+        manifest.json
+        flagged.json
+
+    Upload this single zip as a Kaggle Dataset; Kaggle auto-extracts it, and the
+    loader (``clean_dataset_dir``) finds the ``clean/`` folder automatically.
+    """
+    import zipfile
+
+    data_dir = base_dir() / "data"
+    out = Path(out_zip) if out_zip else data_dir / "tsfm-clean-data.zip"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for sub in ("clean",):
+            for p in (data_dir / sub).glob("*.npz"):
+                z.write(p, arcname=f"{sub}/{p.name}")
+        for meta in ("data_quality_report.csv", "manifest.json", "flagged.json"):
+            mp = data_dir / meta
+            if mp.exists():
+                z.write(mp, arcname=meta)
+    return out
+
+
+def clean_dataset_dir() -> Path | None:
+    """Resolve the mounted Kaggle clean-data Dataset, if present.
+
+    Returns the first dir under ``/kaggle/input/`` containing clean npz files
+    (checking both the dir and its ``clean/`` subfolder). If a dataset shipped as
+    a still-zipped bundle, it is extracted to ``/kaggle/working`` first. Returns
+    None off Kaggle / when nothing is found.
+    """
+    from . import config
+
+    inp = Path("/kaggle/input")
+    candidates = [
+        inp / config.KAGGLE_CLEAN_DATASET,
+        inp / config.KAGGLE_CLEAN_DATASET / "clean",
+    ]
+    if inp.is_dir():
+        for d in inp.iterdir():
+            candidates += [d, d / "clean"]
+    for c in candidates:
+        if c.is_dir() and list(c.glob("*.npz")):
+            return c
+
+    # Fallback: a still-zipped bundle somewhere under /kaggle/input -> extract.
+    if inp.is_dir():
+        for zp in inp.glob("**/*.zip"):
+            dest = Path("/kaggle/working") / "tsfm_clean_extracted"
+            dest.mkdir(parents=True, exist_ok=True)
+            import zipfile
+
+            with zipfile.ZipFile(zp) as z:
+                z.extractall(dest)
+            for c in (dest / "clean", dest):
+                if c.is_dir() and list(c.glob("*.npz")):
+                    return c
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -118,6 +192,45 @@ def save_table_csv(path: str | os.PathLike, rows: list[dict]) -> None:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         w.writerows(rows)
+
+
+def save_clean_npz(
+    asset: str,
+    *,
+    dates: np.ndarray,
+    log_returns: np.ndarray,
+    simple_returns: np.ndarray,
+    source: str,
+    rf: np.ndarray | None = None,
+    clean_dir: str | os.PathLike | None = None,
+) -> Path:
+    """Persist one asset's canonical cleaned returns under outputs/data/clean/."""
+    root = Path(clean_dir) if clean_dir is not None else data_clean_dir()
+    out = root / f"{_safe(asset)}.npz"
+    payload = dict(
+        dates=np.asarray(dates),
+        log_returns=np.asarray(log_returns, dtype=float),
+        simple_returns=np.asarray(simple_returns, dtype=float),
+        source=np.asarray(source),
+    )
+    if rf is not None:
+        payload["rf"] = np.asarray(rf, dtype=float)
+    np.savez_compressed(out, **payload)
+    return out
+
+
+def load_clean_npz(asset: str, clean_dir: str | os.PathLike | None = None) -> dict:
+    """Load one asset's cleaned returns.
+
+    Resolution order: explicit ``clean_dir`` -> mounted Kaggle Dataset
+    (``clean_dataset_dir``) -> local ``outputs/data/clean/``.
+    """
+    if clean_dir is not None:
+        root = Path(clean_dir)
+    else:
+        root = clean_dataset_dir() or data_clean_dir(create=False)
+    npz = np.load(Path(root) / f"{_safe(asset)}.npz", allow_pickle=True)
+    return {k: npz[k] for k in npz.files}
 
 
 def _safe(name: str) -> str:
